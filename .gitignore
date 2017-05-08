@@ -1,2 +1,9 @@
+include*
 *.hex
 *.obj
+*.map
+*.lst
+*.tmp
+*.cof
+*.exe
+*.zip

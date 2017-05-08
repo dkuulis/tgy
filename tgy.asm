@@ -180,13 +180,21 @@
 .if !defined(TIMING_OFFSET)
 .equ	TIMING_OFFSET	= 0	; Motor timing offset in microseconds
 .endif
+.if !defined(MOTOR_BRAKE)
 .equ	MOTOR_BRAKE	= 0	; Enable brake during neutral/idle ("motor drag" brake)
+.endif
+.if !defined(LOW_BRAKE)
 .equ	LOW_BRAKE	= 0	; Enable brake on very short RC pulse ("thumb" brake like on Airtronics XL2P)
+.endif
 .if !defined(MOTOR_REVERSE)
 .equ	MOTOR_REVERSE	= 0	; Reverse normal commutation direction
 .endif
+.if !defined(RC_PULS_REVERSE)
 .equ	RC_PULS_REVERSE	= 0	; Enable RC-car style forward/reverse throttle
-.equ	RC_CALIBRATION	= 1	; Support run-time calibration of min/max pulse lengths
+.endif
+.if !defined(RC_CALIBRATION)
+.equ	RC_CALIBRATION	= 0	; Support run-time calibration of min/max pulse lengths
+.endif
 .equ	SLOW_THROTTLE	= 0	; Limit maximum throttle jump to try to prevent overcurrent
 .equ	BEACON		= 1	; Beep periodically when RC signal is lost
 .equ	BEACON_IDLE	= 0	; Beep periodically if idle for a long period
