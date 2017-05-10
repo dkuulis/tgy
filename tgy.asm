@@ -656,7 +656,6 @@ eeprom_defaults_w:
 .if defined(AnFET)
 ; Traditional direct high and low side drive, inverted if INIT_Px is set.
 ; Dead-time insertion is supported for COMP_PWM.
-; RSB NOTE: INIT_PD IS set for dlu40a for the nFETs
 
 	.equ CPWM_SOFT = COMP_PWM
 
@@ -856,7 +855,7 @@ eeprom_defaults_w:
 	.endmacro
 
 .elif defined(ENABLE_ALL)
-; NOTE: This is for the AFRO style ESCs
+; NOTE: This is for the AFRO style ESCs - but not for AFRO_NFET
 ; Three logic level PWM/ENABLE-style driver, with diode emulation mode or
 ; off state at the middle level on the PWM pin. This is accomplished by
 ; setting a pull-up rather than drive high. With this method, every FET
@@ -1094,7 +1093,7 @@ eeprom_defaults_w:
 		in	temp2, PWM_A_PORT_in
 .endmacro
 .macro PWM_A_copy
-		cpse	temp1, temp2
+		cpse	temp1, temp2	; Compare Skip if Equal
 	.if !defined(AnFET) && COMP_PWM && HIGH_SIDE_PWM
 		AnFET_on
 	.elif HIGH_SIDE_PWM
@@ -1134,7 +1133,7 @@ eeprom_defaults_w:
 		in	temp2, PWM_B_PORT_in
 .endmacro
 .macro PWM_B_copy
-		cpse	temp1, temp2
+		cpse	temp1, temp2	; Compare Skip if Equal
 	.if !defined(BnFET) && COMP_PWM && HIGH_SIDE_PWM
 		BnFET_on
 	.elif HIGH_SIDE_PWM
@@ -1174,7 +1173,7 @@ eeprom_defaults_w:
 		in	temp2, PWM_C_PORT_in
 .endmacro
 .macro PWM_C_copy
-		cpse	temp1, temp2
+		cpse	temp1, temp2	; Compare Skip if Equal
 	.if !defined(CnFET) && COMP_PWM && HIGH_SIDE_PWM
 		CnFET_on
 	.elif HIGH_SIDE_PWM
@@ -1238,6 +1237,33 @@ eeprom_defaults_w:
 
 ;-- RC pulse setup and edge handling macros ------------------------------
 
+; Timer/Counter Interrupt Mask Register – TIMSK(1)
+; (The register contains interrupt control bits for several Timers, but only Timer1 bits are here)
+; Bit 5 – TICIE1: Timer/Counter1, Input Capture Interrupt Enable
+;  When this bit is written to one, and the I-flag in the Status Register is set (interrupts globally
+;  enabled), the Timer/Counter1 Input Capture Interrupt is enabled. The corresponding Interrupt
+;  Vector is executed when the ICF1 Flag, located in TIFR, is set.
+; Bit 4 – OCIE1A: Timer/Counter1, Output Compare A Match Interrupt Enable
+; Bit 3 – OCIE1B: Timer/Counter1, Output Compare B Match Interrupt Enable
+; Bit 2 – TOIE1: Timer/Counter1, Overflow Interrupt Enable
+
+; Timer/Counter 1 Control Register B – TCCR1B
+; Bit 7 – ICNC1: Input Capture Noise Canceler
+;  Setting this bit (to one) activates the Input Capture Noise Canceler. When the noise canceler is
+;  activated, the input from the Input Capture Pin (ICP1) is filtered. The filter function requires four
+;  successive equal valued samples of the ICP1 pin for changing its output.
+; Bit 6 – ICES1: Input Capture Edge Select
+;  This bit selects which edge on the Input Capture Pin (ICP1) that is used to trigger a capture
+;  event. When the ICES1 bit is written to zero, a falling (negative) edge is used as trigger, and
+;  when the ICES1 bit is written to one, a rising (positive) edge will trigger the capture.
+
+; General Interrupt Control Register – GICR
+; Bit 6 – INT0: External Interrupt Request 0 Enable
+;  When the INT0 bit is set (one) and the I-bit in the Status Register (SREG) is set (one), the external
+;  pin interrupt is enabled. The Interrupt Sense Control0 bits 1/0 (ISC01 and ISC00) in the MCU
+;  general Control Register (MCUCR) define whether the external interrupt is activated on rising
+;  and/or falling edge of the INT0 pin or level sensed.
+
 .if USE_ICP
 .macro rcp_int_enable
 		in	@0, TIMSK
@@ -1283,13 +1309,29 @@ eeprom_defaults_w:
 		ldi	@0, (1<<ISC01)+(1<<ISC00)
 		out	MCUCR, @0	; set next int0 to rising edge
 .endmacro
-.endif
-.endif
+.endif	; USE_INT0 variations
+.endif	; USE_ICP/USE_INT0
 
 ;-- Analog comparator sense macros ---------------------------------------
 ; We enable and disable the ADC to override ACME when one of the sense
 ; pins is AIN1 instead of an ADC pin. In the future, this will allow
 ; reading from the ADC at the same time.
+
+; Special Function IO Register – SFIOR
+; Bit 3 – ACME: Analog Comparator Multiplexer Enable
+;  When this bit is written logic one and the ADC is switched off (ADEN in ADCSRA is zero), the
+;  ADC multiplexer selects the negative input to the Analog Comparator. When this bit is written
+;  logic zero, AIN1 is applied to the negative input of the Analog Comparator.
+
+; ADC Multiplexer Selection Register – ADMUX
+; Bit 7:6 – REFS1:0: Reference Selection Bits
+;  These bits select the voltage reference for the ADC - 00 AREF, Internal Vref turned off
+; Bit 5 – ADLAR: ADC Left Adjust Result - 0 - the result is right adjusted
+; Bits 3:0 – MUX3:0: Analog Channel Selection Bits
+
+; ADC Control and Status Register A – ADCSRA
+; Bit 7 – ADEN: ADC Enable
+;  Writing this bit to one enables the ADC. By writing it to zero, the ADC is turned off.
 
 .macro comp_init
 		in	@0, SFIOR
@@ -1305,7 +1347,7 @@ eeprom_defaults_w:
 	.endif
 .endmacro
 .macro comp_adc_enable
-		sbi	ADCSRA, ADEN	; Eisable ADC to effectively disable ACME
+		sbi	ADCSRA, ADEN	; Enable ADC to effectively disable ACME
 .endmacro
 .macro set_comp_phase_a
 	.if defined(mux_a)
@@ -1336,6 +1378,7 @@ eeprom_defaults_w:
 .endmacro
 
 ;-- Timing and motor debugging macros ------------------------------------
+; use PB4 / MISO
 
 .macro flag_on
 	.if MOTOR_DEBUG && (DIR_PB & (1<<4)) == 0
@@ -1349,7 +1392,7 @@ eeprom_defaults_w:
 .endmacro
 
 ; sync_on() and sync_off() are only used if MOTOR_DEBUG is set AND pin on PortB
-;   is set as an output (bit 3 or bit 5)
+;   is set as an output (bit PB3/MOSI or bit PB5/SCK)
 ; NOTE: when enabled, this will end up generating a square wave with the same
 ;   frequency as the commutation cycle.
 .macro sync_on
@@ -1415,10 +1458,18 @@ eeprom_defaults_w:
 ; between the reti and the next interrupt vector execution, which still
 ; takes a good 4 (reti) + 4 (interrupt call) + 2 (ijmp) cycles. We also
 ; try to keep the switch on close to the start of pwm_on and switch off
-; close to the end of pwm_aff to minimize the power bump at full power.
+; close to the end of pwm_off to minimize the power bump at full power.
 ;
 ; pwm_*_high and pwm_again are called when the particular on/off cycle
 ; is longer than will fit in 8 bits. This is tracked in tcnt2h.
+
+; The AVR Status Register – SREG
+; The Status Register is not automatically stored when entering an interrupt routine and restored 
+; when returning from an interrupt. This must be handled by software.
+
+; Timer/Counter Register – TCNT2
+;  The Timer/Counter Register gives direct access, both for read and write operations, to the
+;  Timer/Counter unit 8-bit counter.
 
 .if MOTOR_BRAKE || LOW_BRAKE
 pwm_brake_on:
@@ -1483,6 +1534,7 @@ pwm_on_high:
 pwm_on_again:	out	SREG, i_sreg
 		reti
 
+; tcnt2h is not 0 => continue counting after dec high
 pwm_again:
 		in	i_sreg, SREG
 		dec	tcnt2h
@@ -1518,17 +1570,18 @@ pwm_on:
 	.endif
 .endif
 pwm_on_fast:
-		sbrc	flags2, A_FET
+		sbrc	flags2, A_FET	; Skip if Bit in Register is Cleared
 		PWM_A_on
-		sbrc	flags2, B_FET
+		sbrc	flags2, B_FET	; Skip if Bit in Register is Cleared
 		PWM_B_on
-		sbrc	flags2, C_FET
+		sbrc	flags2, C_FET	; Skip if Bit in Register is Cleared
 		PWM_C_on
 		ldi	ZL, pwm_off
 		mov	tcnt2h, duty_h
 		out	TCNT2, duty_l
 		reti
 
+; NOP interrupt handler - used when off
 pwm_wdr:					; Just reset watchdog
 		wdr
 		reti
@@ -1570,6 +1623,11 @@ pwm_off:
 .if high(pwm_off)
 .error "high(pwm_off) is non-zero; please move code closer to start or use 16-bit (ZH) jump registers"
 .endif
+
+; Timer/Counter 1 – TCNT1H and TCNT1L
+;  The two Timer/Counter I/O locations (TCNT1H and TCNT1L, combined TCNT1) give direct
+;  access, both for read and for write operations, to the Timer/Counter unit 16-bit counter. 
+
 ;-----bko-----------------------------------------------------------------
 ; timer1 output compare interrupt
 t1oca_int:	in	i_sreg, SREG
@@ -1593,7 +1651,7 @@ t1ovfl_int:	in	i_sreg, SREG
 		sts	idle_beacon, i_temp2
 t1ovfl_int0:
 		.endif
-		andi	i_temp1, 15			; Every 16 overflows
+		andi	i_temp1, 15			; Every 16 overflows => ~65ms
 		brne	t1ovfl_int1
 		tst	rc_timeout
 		breq	t1ovfl_int2
@@ -1613,6 +1671,27 @@ t1ovfl_int2:	lds	i_temp1, rct_boot
 ; any other 16-bit timer options happen that might use the same register
 ; (see "Accessing 16-bit registers" in the Atmel documentation)
 ; icp1 = rc pulse input, if enabled
+
+; Input Capture Register 1 – ICR1H and ICR1L
+;  The Input Capture is updated with the counter (TCNT1) value each time an event occurs on the
+;  ICP1 pin. The Input Capture can be used for defining the counter TOP value.
+
+; Timer/Counter 1 Control Register B – TCCR1B
+; Bit 7 – ICNC1: Input Capture Noise Canceler
+;  Setting this bit (to one) activates the Input Capture Noise Canceler. When the noise canceler is
+;  activated, the input from the Input Capture Pin (ICP1) is filtered. The filter function requires four
+;  successive equal valued samples of the ICP1 pin for changing its output.
+; Bit 6 – ICES1: Input Capture Edge Select
+;  This bit selects which edge on the Input Capture Pin (ICP1) that is used to trigger a capture
+;  event. When the ICES1 bit is written to zero, a falling (negative) edge is used as trigger, and
+;  when the ICES1 bit is written to one, a rising (positive) edge will trigger the capture.
+; Bit 4:3 – WGM13:2: Waveform Generation Mode
+; Bit 2:0 – CS12:0: Clock Select
+
+; The Port D Input Pins Address – PIND
+; Alternate Functions of Port D
+;  INT0 – Port D, Bit 2
+
 rcp_int:
 	.if USE_ICP || USE_INT0
 		.if USE_ICP
@@ -1635,7 +1714,8 @@ rising_edge:
 		; Stuff this rise time plus MAX_RC_PULS into OCR1B.
 		; We use this both to save the time it went high and
 		; to get an interrupt to indicate high timeout.
-		adiwx	i_temp1, i_temp2, MAX_RC_PULS * CPU_MHZ
+		; (MAX_RC_PULS - Throw away any pulses longer than this)
+		adiwx	i_temp1, i_temp2, MAX_RC_PULS * CPU_MHZ 
 		out	OCR1BH, i_temp2
 		out	OCR1BL, i_temp1
 		rcp_int_falling_edge i_temp1	; Set next int to falling edge
@@ -1643,6 +1723,16 @@ rising_edge:
 		out	TIFR, i_temp1
 		out	SREG, i_sreg
 		reti
+
+; Timer/Counter Interrupt Flag Register – TIFR
+; (the register contains flag bits for several Timers, but only Timer1 bits are described here)
+; Bit 5 – ICF1: Timer/Counter1, Input Capture Flag
+; Bit 4 – OCF1A: Timer/Counter1, Output Compare A Match Flag
+; Bit 3 – OCF1B: Timer/Counter1, Output Compare B Match Flag
+;  This flag is set in the timer clock cycle after the counter (TCNT1) value matches the OCR1B.
+;  OCF1B is automatically cleared when the Output Compare Match B Interrupt Vector is executed.
+;  Alternatively, OCF1B can be cleared by writing a logic one to its bit location.
+; Bit 2 – TOV1: Timer/Counter1, Overflow Flag
 
 rcpint_fail:
 		in	i_sreg, SREG
@@ -1654,7 +1744,7 @@ falling_edge:
 		sbrc	i_sreg, OCF1B		; Too long high would set OCF1B
 		rjmp	rcpint_fail
 		in	i_sreg, SREG
-		movw	rx_l, i_temp1		; Guaranteed to be valid, store immediately
+		movw	rx_l, i_temp1		; Guaranteed to be valid, store immediately (moves i_temp2:i_temp1 -> rx_h:rx_l)
 		in	i_temp1, OCR1BL		; No atomic temp register used to read OCR1* registers
 		in	i_temp2, OCR1BH
 		sbi2	i_temp1, i_temp2, MAX_RC_PULS * CPU_MHZ	; Put back to start time
@@ -1668,6 +1758,67 @@ rcpint_exit:	rcp_int_rising_edge i_temp1	; Set next int to rising edge
 		out	SREG, i_sreg
 		reti
 	.endif
+
+;-------------------------------------------------------------------------
+; Overview of the TWI Module
+
+; TWI Control Register – TWCR
+;
+; Bit 7 – TWINT: TWI Interrupt Flag
+;  This bit is set by hardware when the TWI has finished its current job and expects application
+;  software response. If the I-bit in SREG and TWIE in TWCR are set, the MCU will jump to the
+;  TWI Interrupt Vector. While the TWINT Flag is set, the SCL low period is stretched. The TWINT
+;  Flag must be cleared by software by writing a logic one to it. Note that this flag is not automatically
+;  cleared by hardware when executing the interrupt routine. Also note that clearing this flag
+;  starts the operation of the TWI, so all accesses to the TWI Address Register (TWAR), TWI Status
+;  Register (TWSR), and TWI Data Register (TWDR) must be complete before clearing this flag.
+;
+; Bit 6 – TWEA: TWI Enable Acknowledge Bit
+;  The TWEA bit controls the generation of the acknowledge pulse. If the TWEA bit is written to
+;  one, the ACK pulse is generated on the TWI bus if the following conditions are met:
+;   1. The device’s own slave address has been received
+;   2. A general call has been received, while the TWGCE bit in the TWAR is set
+;   3. A data byte has been received in Master Receiver or Slave Receiver mode
+;  By writing the TWEA bit to zero, the device can be virtually disconnected from the Two-wire
+;  Serial Bus temporarily. Address recognition can then be resumed by writing the TWEA bit to one again.
+;
+; Bit 5 – TWSTA: TWI START Condition Bit
+;  The application writes the TWSTA bit to one when it desires to become a Master on the Twowire
+;  Serial Bus. The TWI hardware checks if the bus is available, and generates a START condition
+;  on the bus if it is free. However, if the bus is not free, the TWI waits until a STOP condition
+;  is detected, and then generates a new START condition to claim the bus Master status. TWSTA
+;  must be cleared by software when the START condition has been transmitted.
+;
+; Bit 4 – TWSTO: TWI STOP Condition Bit
+;  Writing the TWSTO bit to one in Master mode will generate a STOP condition on the Two-wire
+;  Serial Bus. When the STOP condition is executed on the bus, the TWSTO bit is cleared automatically.
+;  In Slave mode, setting the TWSTO bit can be used to recover from an error condition.
+;  This will not generate a STOP condition, but the TWI returns to a well-defined unaddressed
+;  Slave mode and releases the SCL and SDA lines to a high impedance state.
+; 
+; Bit 3 – TWWC: TWI Write Collision Flag
+;  The TWWC bit is set when attempting to write to the TWI Data Register – TWDR when TWINT is
+;  low. This flag is cleared by writing the TWDR Register when TWINT is high.
+;
+; Bit 2 – TWEN: TWI Enable Bit
+;  The TWEN bit enables TWI operation and activates the TWI interface. When TWEN is written to
+;  one, the TWI takes control over the I/O pins connected to the SCL and SDA pins, enabling the
+;  slew-rate limiters and spike filters. If this bit is written to zero, the TWI is switched off and all TWI
+;  transmissions are terminated, regardless of any ongoing operation.
+;
+; Bit 1 – Reserved Bit
+;
+; Bit 0 – TWIE: TWI Interrupt Enable
+;  When this bit is written to one, and the I-bit in SREG is set, the TWI interrupt request will be activated
+;  for as long as the TWINT Flag is high.
+
+; TWI Status Register – TWSR
+; Bits 7..3 – TWS: TWI Status
+;  These 5 bits reflect the status of the TWI logic and the Two-wire Serial Bus.
+; Bit 2 – Res: Reserved Bit
+; Bits 1..0 – TWPS: TWI Prescaler Bits
+; These bits can be read and written, and control the bit rate prescaler.
+
 ;-----bko-----------------------------------------------------------------
 ; MK BL-Ctrl v1, v2 compatible input control
 ; Ctrl-click Settings in MKTool for reversing and additional settings
@@ -1789,12 +1940,12 @@ urxc_int:
 ; >= 200 is FULL_POWER.
 	.if USE_UART
 		in	i_sreg, SREG
-		in	i_temp1, UDR
+		in	i_temp1, UDR		; USART I/O Data Register – UDR
 		cpi	i_temp1, 0xf5		; Start throttle byte sequence
 		breq	urxc_x3d_sync
 		sbrs	flags0, UART_SYNC
 		rjmp	urxc_exit		; Throw away if not UART_SYNC
-		brcc	urxc_unknown
+		brcc	urxc_unknown	; Branch if Carry Cleared - UDR > 0xF5
 		lds	i_temp2, motor_count
 		dec	i_temp2
 		brne	urxc_set_exit		; Skip when motor_count != 0
@@ -1862,6 +2013,10 @@ beep_f4_on:	CpFET_on
 ;-----bko-----------------------------------------------------------------
 ; Interrupts no longer need to be disabled to beep, but the PWM interrupt
 ; must be muted first
+
+; repeated temp2 times
+; beep on 32µs, with period temp4 µs
+
 beep:		out	TCNT0, ZH
 beep1:		in	temp1, TCNT0
 		cpi	temp1, 2*CPU_MHZ	; 32µs on
@@ -2645,7 +2800,7 @@ evaluate_rc_i2c:
 		cbr	flags1, (1<<EVAL_RC)
 	; Load settings from BLConfig structure (BL-Ctrl v2)
 		lds	temp1, blc_bitconfig
-		bst	temp1, 0		; BitConfig bit 0: Reverse
+		bst	temp1, 0		; BitConfig bit 0: Reverse - Bit Store from Bit in Register to T Flag in SREG
 		bld	flags1, REVERSE
 	; MK sends one or two bytes, if supported, and if low bits are
 	; non-zero. We store the first received byte in rx_h, second
